@@ -218,7 +218,7 @@ public class BitcoinPool : PoolBase
         }
     }
 
-    private async Task OnSuggestDifficultyAsync(StratumConnection connection, Timestamped<JsonRpcRequest> tsRequest)
+   private async Task OnSuggestDifficultyAsync(StratumConnection connection, Timestamped<JsonRpcRequest> tsRequest)
     {
         var request = tsRequest.Value;
         var context = connection.ContextAs<BitcoinWorkerContext>();
@@ -228,12 +228,23 @@ public class BitcoinPool : PoolBase
 
         try
         {
-            var requestedDiff = (double) Convert.ChangeType(request.Params, TypeCode.Double)!;
+            double requestedDiff;
+
+            // Check if request.Params is a JArray and access the first element
+            if (request.Params is JArray paramsArray && paramsArray.Count > 0)
+            {
+                requestedDiff = paramsArray[0].ToObject<double>();
+            }
+            else
+            {
+                // Handle other cases if needed, or throw an exception
+                throw new InvalidCastException("Invalid type for request.Params");
+            }
 
             // client may suggest higher-than-base difficulty, but not a lower one
             var poolEndpoint = poolConfig.Ports[connection.LocalEndpoint.Port];
 
-            if(requestedDiff > poolEndpoint.Difficulty)
+            if (requestedDiff > poolEndpoint.Difficulty)
             {
                 context.SetDifficulty(requestedDiff);
                 await connection.NotifyAsync(BitcoinStratumMethods.SetDifficulty, new object[] { context.Difficulty });
@@ -241,12 +252,12 @@ public class BitcoinPool : PoolBase
                 logger.Info(() => $"[{connection.ConnectionId}] Difficulty set to {requestedDiff} as requested by miner");
             }
         }
-
-        catch(Exception ex)
+        catch (Exception ex)
         {
             logger.Error(ex, () => $"Unable to convert suggested difficulty {request.Params}");
         }
     }
+
 
     private async Task OnConfigureMiningAsync(StratumConnection connection, Timestamped<JsonRpcRequest> tsRequest)
     {
