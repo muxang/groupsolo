@@ -70,15 +70,15 @@ public class BitcoinPool : PoolBase
         context.IsSubscribed = true;
         context.UserAgent = requestParams.FirstOrDefault()?.Trim();
 
-        // Nicehash support
-        var nicehashDiff = await GetNicehashStaticMinDiff(context, coin.Name, coin.GetAlgorithmName());
+        // Nicehash support -- change by chairs
+        // var nicehashDiff = await GetNicehashStaticMinDiff(context, coin.Name, coin.GetAlgorithmName());
 
-        if(nicehashDiff.HasValue)
+        if(context.IsNicehash)
         {
-            logger.Info(() => $"[{connection.ConnectionId}] Nicehash detected. Using API supplied difficulty of {nicehashDiff.Value}");
+            logger.Info(() => $"[{connection.ConnectionId}] Nicehash detected. Using API supplied difficulty of 500000");
 
             context.VarDiff = null; // disable vardiff
-            context.SetDifficulty(nicehashDiff.Value);
+            context.SetDifficulty(500000);
         }
 
         // send intial update
