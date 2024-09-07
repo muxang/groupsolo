@@ -88,44 +88,65 @@ public class BitcoinPool : PoolBase
 
     protected virtual async Task OnAuthorizeAsync(StratumConnection connection, Timestamped<JsonRpcRequest> tsRequest, CancellationToken ct)
     {
+        // Extract the request
         var request = tsRequest.Value;
 
-        if(request.Id == null)
+        // Check if request ID is missing
+        if (request.Id == null)
             throw new StratumException(StratumError.MinusOne, "missing request id");
 
+        // Get the worker context from the connection, check if null
         var context = connection.ContextAs<BitcoinWorkerContext>();
+        if (context == null)
+            throw new Exception("Context is null");
+
+        // Extract request parameters and check if valid
         var requestParams = request.ParamsAs<string[]>();
-        var workerValue = requestParams?.Length > 0 ? requestParams[0] : null;
-        var password = requestParams?.Length > 1 ? requestParams[1] : null;
+        if (requestParams == null || requestParams.Length == 0)
+            throw new StratumException(StratumError.MinusOne, "Missing request parameters");
+
+        // Extract worker value (minerName) and password
+        var workerValue = requestParams.Length > 0 ? requestParams[0] : null;
+        if (workerValue == null)
+            throw new StratumException(StratumError.MinusOne, "Missing miner name");
+
+        var password = requestParams.Length > 1 ? requestParams[1] : null;
         var passParts = password?.Split(PasswordControlVarsSeparator);
 
-        // extract worker/miner
-        var split = workerValue?.Split('.');
-        var minerName = split?.FirstOrDefault()?.Trim();
-        var workerName = split?.Skip(1).FirstOrDefault()?.Trim() ?? string.Empty;
+        // Extract miner and worker names
+        var split = workerValue.Split('.');
+        var minerName = split.FirstOrDefault()?.Trim();
+        var workerName = split.Skip(1).FirstOrDefault()?.Trim() ?? string.Empty;
 
-        // assumes that minerName is an address
+        if (minerName == null)
+            throw new StratumException(StratumError.MinusOne, "Miner name is null");
+
+        // Check if manager is initialized
+        if (manager == null)
+            throw new Exception("Manager is null");
+
+        // Validate the address and set the context
         context.IsAuthorized = await manager.ValidateAddressAsync(minerName, ct);
         context.Miner = minerName;
         context.Worker = workerName;
 
-        if(context.IsAuthorized)
+        // If authorized, respond to the connection
+        if (context.IsAuthorized)
         {
-            // respond
             await connection.RespondAsync(context.IsAuthorized, request.Id);
 
-            // log association
+            // Log the authorized worker
             logger.Info(() => $"[{connection.ConnectionId}] Authorized worker {workerValue}");
 
-            // extract control vars from password
+            // Extract control variables from password
             var staticDiff = GetStaticDiffFromPassparts(passParts);
 
-            // Static diff
-            if(staticDiff.HasValue &&
-               (context.VarDiff != null && staticDiff.Value >= context.VarDiff.Config.MinDiff ||
-                   context.VarDiff == null && staticDiff.Value > context.Difficulty))
+            // Static difficulty handling
+            if (staticDiff.HasValue &&
+            (context.VarDiff != null && staticDiff.Value >= context.VarDiff.Config.MinDiff ||
+                context.VarDiff == null && staticDiff.Value > context.Difficulty))
             {
-                context.VarDiff = null; // disable vardiff
+                context.VarDiff = null; // Disable variable difficulty
                 context.SetDifficulty(staticDiff.Value);
 
                 logger.Info(() => $"[{connection.ConnectionId}] Setting static difficulty of {staticDiff.Value}");
@@ -133,22 +154,21 @@ public class BitcoinPool : PoolBase
                 await connection.NotifyAsync(BitcoinStratumMethods.SetDifficulty, new object[] { context.Difficulty });
             }
         }
-
         else
         {
+            // If not authorized, respond with an error
             await connection.RespondErrorAsync(StratumError.UnauthorizedWorker, "Authorization failed", request.Id, context.IsAuthorized);
 
-            if(clusterConfig?.Banning?.BanOnLoginFailure is null or true)
+            // Optionally ban the unauthorized worker to prevent DDoS
+            if (clusterConfig?.Banning?.BanOnLoginFailure is null or true)
             {
-                // issue short-time ban if unauthorized to prevent DDos on daemon (validateaddress RPC)
                 logger.Info(() => $"[{connection.ConnectionId}] Banning unauthorized worker {minerName} for {loginFailureBanTimeout.TotalSeconds} sec");
-
                 banManager.Ban(connection.RemoteEndpoint.Address, loginFailureBanTimeout);
-
                 Disconnect(connection);
             }
         }
     }
+
 
     protected virtual async Task OnSubmitAsync(StratumConnection connection, Timestamped<JsonRpcRequest> tsRequest, CancellationToken ct)
     {

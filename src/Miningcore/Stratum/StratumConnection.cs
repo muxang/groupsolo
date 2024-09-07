@@ -65,7 +65,7 @@ public class StratumConnection
         ContractResolver = new CamelCasePropertyNamesContractResolver()
     };
 
-    private const int SendQueueCapacity = 16;
+    private const int SendQueueCapacity = 128;
     private static readonly TimeSpan sendTimeout = TimeSpan.FromMilliseconds(5000);
 
     #region API-Surface
@@ -224,17 +224,18 @@ public class StratumConnection
         return sendQueue.SendAsync(payload);
     }
 
-    private async Task FillReceivePipeAsync(CancellationToken ct)
+   private async Task FillReceivePipeAsync(CancellationToken ct)
     {
-        while(!ct.IsCancellationRequested)
+        while (!ct.IsCancellationRequested)
         {
             logger.Debug(() => $"[{ConnectionId}] [NET] Waiting for data ...");
 
-            var memory = receivePipe.Writer.GetMemory(MaxInboundRequestLength + 1);
+            // 动态获取内存，而不使用固定大小的限制
+            var memory = receivePipe.Writer.GetMemory();
 
             // read from network directly into pipe memory
             var cb = await networkStream.ReadAsync(memory, ct);
-            if(cb == 0)
+            if (cb == 0)
                 break; // EOF
 
             logger.Debug(() => $"[{ConnectionId}] [NET] Received data: {Encoding.GetString(memory.Slice(0, cb).Span)}");
@@ -245,7 +246,7 @@ public class StratumConnection
             receivePipe.Writer.Advance(cb);
 
             var result = await receivePipe.Writer.FlushAsync(ct);
-            if(result.IsCompleted)
+            if (result.IsCompleted)
                 break;
         }
     }
@@ -263,8 +264,11 @@ public class StratumConnection
             var buffer = result.Buffer;
             SequencePosition? position;
 
-            if(buffer.Length > MaxInboundRequestLength)
-                throw new InvalidDataException($"Incoming data exceeds maximum of {MaxInboundRequestLength}");
+            // 注释掉以下代码或删除 delete by chairs
+            // if(buffer.Length > MaxInboundRequestLength)
+            // {
+            //     throw new InvalidDataException($"Incoming data exceeds maximum of {MaxInboundRequestLength}");
+            // }
 
             logger.Debug(() => $"[{ConnectionId}] [PIPE] Received data: {result.Buffer.AsString(Encoding)}");
 
